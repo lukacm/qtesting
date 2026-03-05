@@ -24,20 +24,20 @@ from qiskit.circuit.library import MCMTVChain
 from qiskit.visualization import plot_distribution
 import binembedP
  
+fa_triplets = """
+0 1 2
+0 2 2
+0 3 1
+1 1 2
+1 2 3
+1 3 1
+"""
 #fa_triplets = """
-#0 1 3
+#0 1 1
 #0 2 2
-#0 3 1
 #1 1 2
 #1 2 2
-#1 3 1
 #"""
-fa_triplets = """
-0 1 1
-0 2 2
-1 1 2
-1 2 2
-"""
 
 
 #Qubits for embedding the FA
@@ -59,14 +59,22 @@ input_seq_length =3
 #Search requirements
 search_addons = 1
 
-#test 
-#matrix = [[0, 0, 0, 1],
-#            [0, 0, 1, 0],
-#            [1, 0, 0, 0],
-#            [0, 1, 0, 0]]
-#gateic = UnitaryGate(matrix)
-#print(gateic)
-
+def insertQgate(circuit, gate, meta):
+#Construct the quantum circuit to simulate the FA for the input sequence
+    for j in range(len(meta['states'])):
+        for i in range(input_seq_length):
+            qubits = list()
+            qubits.append(i)
+            for e in range(meta['n_a']):
+                #qubits.append(input_seq_length+input_seq_length*meta['n_a']*j+e+i)
+                qubits.insert(0,input_seq_length+input_seq_length*meta['n_a']*j+e+i)
+            for s in range(meta['n_s']):
+                #qubits.append(input_seq_length+len(meta['states'])*embedding_ancillae*input_seq_length+j*meta['n_s']+s)
+                qubits.insert(0,input_seq_length+len(meta['states'])*embedding_ancillae*input_seq_length+j*meta['n_s']+s)
+            print("State: ",j,qubits)
+            circuit.unitary(gate, qubits)
+    #        circuit.append(gate, qubits)
+ 
 print(input_seq_length)
 print(len(meta['states'])*input_seq_length*embedding_ancillae)
 print(len(meta['states'])*meta['n_s'])
@@ -94,21 +102,9 @@ for i in range(len(meta['states'])):
             circuit.x(input_seq_length+len(meta['states'])*embedding_ancillae*input_seq_length+j*meta['n_s']+j)
  
 #Construct the quantum circuit to simulate the FA for the input sequence
-for j in range(len(meta['states'])):
-    for i in range(input_seq_length):
-        qubits = list()
-        qubits.append(i)
-        for e in range(meta['n_a']):
-            #qubits.append(input_seq_length+input_seq_length*meta['n_a']*j+e+i)
-            qubits.insert(0,input_seq_length+input_seq_length*meta['n_a']*j+e+i)
-        for s in range(meta['n_s']):
-            #qubits.append(input_seq_length+len(meta['states'])*embedding_ancillae*input_seq_length+j*meta['n_s']+s)
-            qubits.insert(0,input_seq_length+len(meta['states'])*embedding_ancillae*input_seq_length+j*meta['n_s']+s)
-        print("State: ",j,qubits)
-        qubts= list(i for i in qubits)
-#        circuit.unitary(gate, qubts)
-        circuit.append(gate, qubts)
-        
+insertQgate(circuit, gate, meta)
+print(circuit.draw(output='text'))
+
 
 #Create the Quantum Grover Oracle
 oracle = QuantumCircuit(total_qubits)
@@ -118,7 +114,8 @@ for j in range(len(meta['states'])*meta['n_s']):
     ccontrols.append(total_qubits - 1 - len(meta['states'])*meta['n_s'] +j)
 print(ccontrols)
 states = meta['state_map']
-for i in range(len(meta['states'])):
+#for i in range(len(meta['states'])):
+for i in range(1):
     oracle.h(total_qubits-1)
     negs = ((" ".join(states[f'{i+1}']*3)).replace(" ",""))
     for j in range(len(negs)):
@@ -130,17 +127,21 @@ for i in range(len(meta['states'])):
             oracle.x(total_qubits - 1 - len(meta['states'])*meta['n_s'] +j)
     oracle.h(total_qubits-1)
 
-print(oracle.draw(output='text'))
+#print(oracle.draw(output='text'))
+ccontrols.append(total_qubits-1)
 grover_op = grover_operator(oracle, reflection_qubits=ccontrols, insert_barriers=True)
 optimal_num_iterations = math.floor(
-    math.pi
-    / (4 * math.asin(math.sqrt(len(meta['states']) / 2**len(ccontrols))))
+    math.pi / (4 * math.asin(math.sqrt(len(meta['states']) / 2**len(meta['states']))))
+    #math.pi / (4 * math.asin(math.sqrt(len(meta['states']) / 2**len(ccontrols))))
     #/ (4 * math.asin(math.sqrt(len(meta['states']) / 2**grover_op.num_qubits)))
 )
-optimal_num_iterations = 5
+optimal_num_iterations=2
 circuit.compose(grover_op.power(optimal_num_iterations), inplace=True)
+
 circuit = transpile(circuit, optimization_level=3)#, basis_gates=["u3", "cx"])
-print(dict(circuit.count_ops()))
+#print(dict(circuit.count_ops()))
+#print(grover_op.decompose().draw(output="text"))
+#print(circuit.draw(output='text'))
 
 
 # Measure all qubits
@@ -148,10 +149,6 @@ print(dict(circuit.count_ops()))
 #circuit.measure(10,1)
 #circuit.measure_all()
 #circuit.draw(output="text", style="iqp")
-grover_op.decompose().draw(output="text")
-
-
-print(circuit.draw(output='text'))
 
 
 
@@ -183,12 +180,11 @@ pm = generate_preset_pass_manager(backend=aer_sim, optimization_level=1)
 isa_circuit = pm.run(circuit)
 with Session(backend=aer_sim) as session:
     sampler = Sampler()
-    #result = sampler.run([isa_circuit]).result()
-#Run on hardware
     sampler.options.default_shots = 10_000
     result = sampler.run([isa_circuit]).result()
     dist = result[0].data#.meas.get_counts()
-    print(dist)
+    psi = Statevector(isa_circuit)
+    print(psi)
 
 
  
@@ -248,10 +244,14 @@ print(form.format(s_idx[l-1]), probas[s_idx[l-1]])
 print(form.format(s_idx[l-2]), probas[s_idx[l-2]])
 print(form.format(s_idx[l-3]), probas[s_idx[l-3]])
 print(form.format(s_idx[l-4]), probas[s_idx[l-4]])
-print(s_idx[l-5], probas[s_idx[l-5]])
-print(s_idx[l-6], probas[s_idx[l-6]])
-print(s_idx[l-7], probas[s_idx[l-7]])
-print(s_idx[l-8], probas[s_idx[l-8]])
+print(form.format(s_idx[l-1]), probas[s_idx[l-5]])
+print(form.format(s_idx[l-2]), probas[s_idx[l-6]])
+print(form.format(s_idx[l-3]), probas[s_idx[l-7]])
+print(form.format(s_idx[l-4]), probas[s_idx[l-8]])
+print(form.format(s_idx[l-1]), probas[s_idx[l-9]])
+print(form.format(s_idx[l-2]), probas[s_idx[l-10]])
+print(form.format(s_idx[l-3]), probas[s_idx[l-11]])
+print(form.format(s_idx[l-4]), probas[s_idx[l-12]])
 ##print(Statevector(circuit).probabilities(qargs=[0]) )
 #print(Statevector(circuit).probabilities(qargs=[1]) )
 #print(Statevector(circuit).probabilities(qargs=[2]) )
