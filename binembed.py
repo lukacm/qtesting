@@ -1,0 +1,130 @@
+import numpy as np
+from scipy.sparse import csr_matrix
+import math
+
+def build_binary_reversible_matrix(triplets_str):
+    # 1. Parse Input
+    lines = [line.split() for line in triplets_str.strip().split('\n') if line.strip()]
+    
+    #count output states
+    output_states = (list(l[2] for l in lines))
+    unique_out_st = np.unique_counts(output_states)
+    unique_inputs = sorted(list(set(l[0] for l in lines)))
+    unique_states = sorted(list(set(l[1] for l in lines) | set(l[2] for l in lines)))
+    
+    # Calculate required bits
+    n_i = math.ceil(math.log2(len(unique_inputs))) if len(unique_inputs) > 1 else 1
+    n_s = math.ceil(math.log2(len(unique_states))) if len(unique_states) > 1 else 1
+    #Calculate the number of ancillae
+    n_a = int(max(list(math.fabs(len(unique_inputs)- count)  for count in unique_out_st.counts)))
+    
+    # Map labels to bit-integers
+    input_to_bin = {val: i for i, val in enumerate(unique_inputs)}
+    state_to_bin = {val: i for i, val in enumerate(unique_states)}
+    
+    # Transition function: delta(input_bits, state_bits) -> next_state_bits
+    delta = {}
+    for inp, curr, nxt in lines:
+        delta[(input_to_bin[inp], state_to_bin[curr])] = state_to_bin[nxt]
+
+
+    # Total qubits/bits: Input + Ancilla + State
+    total_bits = n_i + n_a + n_s
+    dim = 2**total_bits
+    
+    rows = []
+    cols = []
+    data = []
+
+    # Ancilla mask to ensure XOR stays within the parameter bit-width
+    a_mask = (1 << n_a) - 1
+
+    print(f"Bits: {n_i} (input) + {n_a} (ancilla) + {n_s} (state) = {total_bits} total")
+    print(f"Matrix Dimension: {dim}x{dim}")
+
+    # Iterate through every possible binary configuration (the basis vectors)
+    for i_val in range(2**n_i):
+        for a_val in range(2**n_a):
+            for s_val in range(2**n_s):
+                
+                # Calculate Column Index (Current basis state)
+                # Order: Input bits (highest), Ancilla bits (middle), State bits (lowest)
+                col_idx = (i_val << (n_a + n_s)) | (a_val << n_s) | s_val
+                
+                # Determine next state from FA (default to 0 if transition undefined)
+                next_state_idx = delta.get((i_val, s_val), 0)
+    
+                # REVERSIBLE STEP: XOR the next state index into the ancilla
+                # This is reversible because (a ^ next) ^ next = a
+                new_a_val = a_val ^ (next_state_idx & a_mask)
+
+                # Calculate Row Index (Target basis state)
+                row_idx = (i_val << (n_a + n_s)) | (new_a_val << n_s) | s_val
+                
+                rows.append(row_idx)
+                cols.append(col_idx)
+                data.append(1.0)
+
+    # Build sparse matrix: V_out = M * V_in
+    matrix = csr_matrix((data, (rows, cols)), shape=(dim, dim))
+    
+    metadata = {
+            'n_i': n_i, 'n_s': n_s, 'total_bits': total_bits,
+        'inputs': unique_inputs, 'states': unique_states
+    }
+    return matrix, metadata
+
+def get_binary_vector(input_label, ancilla_label, state_label, meta):
+    """Creates a column vector for a specific binary state."""
+    i_idx = meta['inputs'].index(input_label)
+    # Ancilla is usually initialized to '0' (first state)
+    a_idx = meta['states'].index(ancilla_label) 
+    s_idx = meta['states'].index(state_label)
+    
+    idx = (i_idx << (meta['n_s'] * 2)) | (a_idx << meta['n_s']) | s_idx
+    v = np.zeros(2**(meta['n_i'] + 2*meta['n_s']))
+    v[idx] = 1.0
+    return v.reshape(-1, 1)
+
+def decode_binary_vector(v, meta):
+    """Converts the high-index of a vector back to readable labels."""
+    idx = np.argmax(v)
+    n_s = meta['n_s']
+    
+    s_mask = (1 << n_s) - 1
+    
+    s_idx = idx & s_mask
+    a_idx = (idx >> n_s) & s_mask
+    i_idx = (idx >> (n_s * 2))
+    
+    # Handle indices outside the original label range (due to power-of-2 padding)
+    i_lab = meta['inputs'][i_idx] if i_idx < len(meta['inputs']) else f"bin({i_idx})"
+    a_lab = meta['states'][a_idx] if a_idx < len(meta['states']) else f"bin({a_idx})"
+    s_lab = meta['states'][s_idx] if s_idx < len(meta['states']) else f"bin({s_idx})"
+    
+    return f"|In:{i_lab}, Ancilla:{a_lab}, State:{s_lab}>"
+
+## --- Run Example ---
+#fa_triplets = """
+#0 A B
+#0 B C
+#0 C B
+#1 A C
+#1 B A
+#1 C A
+#"""
+#
+#matrix, meta = build_binary_reversible_matrix(fa_triplets)
+#
+## Test: Input '0', State 'A', Ancilla 'A' (A is index 0)
+#v_in = get_binary_vector('0', 'A', 'A', meta)
+#v_out = matrix @ v_in
+#
+#print("\nBinary Vector Mapping:")
+#print(f"Input Column:  {decode_binary_vector(v_in, meta)}")
+#print(f"Output Column: {decode_binary_vector(v_out, meta)}")
+#
+## Reversibility Check (M^T * M = I)
+#is_rev = np.allclose((matrix.T @ matrix).toarray(), np.eye(matrix.shape[0]))
+#print(f"\nMatrix is Reversible: {is_rev}")
+#print(matrix.todense())

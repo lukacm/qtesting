@@ -1,0 +1,94 @@
+import numpy as np
+
+def generate_ancilla_reversible_matrix(transitions_text):
+    # 1. Parse Input
+    transitions = []
+    states = set()
+    inputs = set()
+    
+    for line in transitions_text.strip().split('\n'):
+        curr, inp, nxt = [item.strip() for item in line.split(',')]
+        transitions.append((curr, inp, nxt))
+        states.add(curr)
+        states.add(nxt)
+        inputs.add(inp)
+    
+    sorted_states = sorted(list(states))
+    sorted_inputs = sorted(list(inputs))
+    
+    # State mapping to integers for XOR/Addition logic
+    state_map = {s: i for i, s in enumerate(sorted_states)}
+    input_map = {inp: i for i, inp in enumerate(sorted_inputs)}
+    
+    num_states = len(sorted_states)
+    num_inputs = len(sorted_inputs)
+    
+    # The dimension is (States * Inputs * Ancilla_States)
+    # We use the ancilla to store the previous state history
+    # New state space: S (current) x I (input) x A (ancilla/history)
+    # Mapping: (s, i, a) -> (delta(s,i) ^ a, i, s)
+    
+    dim = num_states * num_inputs * num_states
+    matrix = np.zeros((dim, dim), dtype=int)
+    
+    # Lookup for the original FA transition
+    trans_lookup = {(s, i): n for s, i, n in transitions}
+
+    print(f"Original States: {len(sorted_states)}, Inputs: {len(sorted_inputs)}")
+    print(f"Permutative Matrix Dimension: {dim}x{dim}\n")
+
+    for s_idx in range(num_states):
+        for i_idx in range(num_inputs):
+            for a_idx in range(num_states):
+                # Row index calculation
+                row = (s_idx * num_inputs * num_states) + (i_idx * num_states) + a_idx
+                
+                curr_s = sorted_states[s_idx]
+                curr_i = sorted_inputs[i_idx]
+                
+                if (curr_s, curr_i) in trans_lookup:
+                    nxt_s_val = trans_lookup[(curr_s, curr_i)]
+                    nxt_s_idx = state_map[nxt_s_val]
+                    
+                    # Reversible Embedding Logic:
+                    # New State Component = (Next State Index) XOR (Ancilla Index)
+                    # New Input Component = (Same Input)
+                    # New Ancilla Component = (Current State Index)
+                    
+                    target_s_idx = nxt_s_idx ^ a_idx
+                    # Ensure the XOR result stays within bounds (handles non-power-of-2 state counts)
+                    target_s_idx = target_s_idx % num_states 
+                    
+                    target_i_idx = i_idx
+                    target_a_idx = s_idx # History preservation
+                    
+                    col = (target_s_idx * num_inputs * num_states) + \
+                          (target_i_idx * num_states) + \
+                          target_a_idx
+                    
+                    matrix[row, col] = 1
+                else:
+                    # If FA is incomplete, we must still define a permutation
+                    # for the matrix to be permutative. Usually identity for missing.
+                    matrix[row, row] = 1
+
+    return matrix
+
+# --- Example of a Non-Reversible FA ---
+# A,0 -> B
+# B,0 -> B  (Two states mapping to B for input 0 - not reversible!)
+fa_data = """
+A, 0, B
+B, 0, A
+A, 1, A
+B, 1, A
+"""
+
+matrix = generate_ancilla_reversible_matrix(fa_data)
+
+# Check if permutative (Exactly one 1 per row and column)
+is_permutative = np.all(matrix.sum(axis=0) == 1) and np.all(matrix.sum(axis=1) == 1)
+
+print("Permutative Matrix (partial view):")
+print(matrix[:10, :10]) # Printing a small slice
+print(f"\nIs it a valid permutative matrix? {is_permutative}")

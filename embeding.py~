@@ -1,0 +1,75 @@
+import numpy as np
+
+def generate_reversible_matrix(transitions_text):
+    # 1. Parse Input
+    # Format: current_state, input, next_state
+    transitions = []
+    states = set()
+    inputs = set()
+    
+    for line in transitions_text.strip().split('\n'):
+        curr, inp, nxt = [item.strip() for item in line.split(',')]
+        transitions.append((curr, inp, nxt))
+        states.add(curr)
+        states.add(nxt)
+        inputs.add(inp)
+    
+    sorted_states = sorted(list(states))
+    sorted_inputs = sorted(list(inputs))
+    
+    state_map = {s: i for i, s in enumerate(sorted_states)}
+    input_map = {inp: i for i, inp in enumerate(sorted_inputs)}
+    
+    num_states = len(sorted_states)
+    num_inputs = len(sorted_inputs)
+    dimension = num_states * num_inputs
+    
+    # Create an empty matrix
+    # Using a dictionary for mapping (state, input) pairs to a single index
+    matrix = np.zeros((dimension, dimension), dtype=int)
+    
+    # 2. Build the Reversible Embedding
+    # The rule is: (current_state, input) -> (next_state, input)
+    # This preserves the input to ensure reversibility (injectivity)
+    
+    # Store transitions in a lookup for easy access
+    trans_lookup = {(s, i): n for s, i, n in transitions}
+    
+    print(f"Matrix Dimension: {dimension}x{dimension}")
+    print(f"Mapping Order: " + ", ".join([f"({s},{i})" for s in sorted_states for i in sorted_inputs]))
+    print("-" * 30)
+
+    for s_idx, s_val in enumerate(sorted_states):
+        for i_idx, i_val in enumerate(sorted_inputs):
+            # Row index in the permutation matrix
+            row = s_idx * num_inputs + i_idx
+            
+            # Find the next state
+            if (s_val, i_val) in trans_lookup:
+                nxt_state = trans_lookup[(s_val, i_val)]
+                nxt_s_idx = state_map[nxt_state]
+                
+                # Column index: (next_state, same_input)
+                col = nxt_s_idx * num_inputs + i_idx
+                matrix[row, col] = 1
+            else:
+                print(f"Warning: Transition for ({s_val}, {i_val}) not defined.")
+
+    return matrix, sorted_states, sorted_inputs
+
+# --- Example Usage ---
+fa_data = """
+A, 0, B
+A, 1, A
+B, 0, A
+B, 1, B
+"""
+
+matrix, states, inputs = generate_reversible_matrix(fa_data)
+
+print("Permutative Matrix:")
+print(matrix)
+
+# Verification
+is_permutation = np.all(np.sum(matrix, axis=0) == 1) and np.all(np.sum(matrix, axis=1) == 1)
+print(f"\nIs it a valid permutation matrix? {is_permutation}")

@@ -1,0 +1,111 @@
+
+import numpy as np
+from scipy.sparse import csr_matrix
+
+def build_reversible_fa_matrix(triplets_str):
+    """
+    Builds a reversible permutation matrix from FA transitions.
+    Input format: "input current_state next_state" per line.
+    """
+    # 1. Parse the input triplets
+    transitions = []
+    inputs = set()
+    states = set()
+
+    lines = triplets_str.strip().split('\n')
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 3: continue
+        inp, curr, nxt = parts
+        transitions.append((inp, curr, nxt))
+        inputs.add(inp)
+        states.add(curr)
+        states.add(nxt)
+
+    # 2. Map labels to indices
+    input_list = sorted(list(inputs))
+    state_list = sorted(list(states))
+
+    input_map = {val: i for i, val in enumerate(input_list)}
+    state_map = {val: i for i, val in enumerate(state_list)}
+
+    num_i = len(input_list)
+    num_s = len(state_list)
+
+    # 3. Define the mapping function f(i, s) -> s'
+    # We use a dictionary for the lookup
+    fa_map = {}
+    for inp, curr, nxt in transitions:
+        fa_map[(input_map[inp], state_map[curr])] = state_map[nxt]
+
+    # 4. Construct the Reversible Permutation Matrix
+    # Space: |Input> @ |CurrentState> @ |AncillaState>
+    # Dimension: num_i * num_s * num_s
+    dim = num_i * num_s * num_s
+    rows = []
+    cols = []
+    data = []
+
+    print(f"Constructing a {dim}x{dim} reversible matrix...")
+
+    for i_idx in range(num_i):
+        for s_idx in range(num_s):
+            # Get the next state from FA, default to 0 if transition not defined
+            nxt_idx = fa_map.get((i_idx, s_idx), 0)
+
+            for a_idx in range(num_s):
+                # Calculate the row index (input, state, ancilla)
+                # row = i * (num_s^2) + s * (num_s) + a
+                row_idx = (i_idx * num_s * num_s) + (s_idx * num_s) + a_idx
+
+                # Reversible logic: target_new = target_old XOR next_state
+                # Using modulo addition as a general XOR equivalent for arbitrary state sizes
+                a_new = (a_idx + nxt_idx) % num_s
+
+                # Calculate the column index
+                col_idx = (i_idx * num_s * num_s) + (s_idx * num_s) + a_new
+
+                rows.append(row_idx)
+                cols.append(col_idx)
+                data.append(1)
+
+    # Create Sparse Matrix
+    matrix = csr_matrix((data, (rows, cols)), shape=(dim, dim))
+
+    return matrix, (input_list, state_list)
+
+def verify_reversibility(matrix):
+    # A matrix is a permutation matrix (reversible) if M * M.T = Identity
+    m_dense = matrix.toarray()
+    identity_check = np.dot(m_dense, m_dense.T)
+    is_reversible = np.allclose(identity_check, np.eye(matrix.shape[0]))
+    return is_reversible
+
+# --- Example Usage ---
+fa_data = """
+0 A A
+0 B C
+0 C A
+1 A B
+1 B A
+1 C C
+"""
+
+rev_matrix, (inputs, states) = build_reversible_fa_matrix(fa_data)
+
+print(f"Matrix Shape: {rev_matrix.shape}")
+print(rev_matrix) # Printing a small slice
+print(f"Is Reversible: {verify_reversibility(rev_matrix)}")
+
+# To see the matrix indices:
+print("\nMapping Sample (Input, Current, Ancilla) -> (Input, Current, NewAncilla):")
+num_s = len(states)
+for i in range(len(inputs)):
+    for s in range(num_s):
+        # Shows how the FA state is embedded into the permutation of the ancilla
+        print(f"Input {inputs[i]}, State {states[s]}: Ancilla flips by +{states.index(fa_data.split()[3*i+2]) if i < 1 else '...'} ")
+        break # Just showing first few
+
+print(rev_matrix.todense())
+
+print(fa_data)
