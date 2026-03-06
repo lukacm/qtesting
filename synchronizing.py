@@ -4,6 +4,7 @@ import qiskit
 import math
 #import aer 
 #from qiskit.providers.aer.library import save_statevector
+import matplotlib.pyplot as plt
 from qiskit_aer import AerSimulator
 from qiskit import  QuantumCircuit
 from qiskit.compiler import transpile
@@ -19,7 +20,7 @@ from qiskit_ibm_runtime import Session, SamplerV2 as Sampler, QiskitRuntimeServi
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit.library import UnitaryGate
 from qiskit.quantum_info import Statevector
-from qiskit.circuit.library import grover_operator
+from qiskit.circuit.library import grover_operator, MCMTGate, ZGate
 from qiskit.circuit.library import MCMTVChain
 from qiskit.visualization import plot_distribution
 import binembedP
@@ -50,9 +51,9 @@ unitary_fa_qubits= meta['total_bits']
 input_qubits = meta['n_i']
 state_qubits = meta['n_s']
 unitary = matrix.todense()
-gate = UnitaryGate(unitary.transpose())
+gate = UnitaryGate(unitary)
  
-print(gate)
+#print(gate)
 #Input seuqnece length
 input_seq_length =3 
 
@@ -74,7 +75,45 @@ def insertQgate(circuit, gate, meta):
             print("State: ",j,qubits)
             circuit.unitary(gate, qubits)
     #        circuit.append(gate, qubits)
- 
+
+
+def grover_oracle(marked_states, qubits, targets):
+    """Build a Grover oracle for multiple marked states
+
+    Here we assume all input marked states have the same number of bits
+
+    Parameters:
+        marked_states (str or list): Marked states of oracle
+
+    Returns:
+        QuantumCircuit: Quantum circuit representing Grover oracle
+    """
+    if not isinstance(marked_states, list):
+        marked_states = [marked_states]
+    # Compute the number of qubits in circuit
+#    num_qubits = len(marked_states[0])
+    num_qubits = qubits
+    qc = QuantumCircuit(num_qubits)
+    # Mark each target state in the input list
+    for target in marked_states:
+        # Flip target bit-string to match Qiskit bit-ordering
+        rev_target = target[::-1]
+        # Find the indices of all the '0' elements in bit-string
+        zero_inds = [
+            ind+targets[0]
+            for ind in range(num_qubits)
+            if rev_target.startswith("0", ind)
+        ]
+        # Add a multi-controlled Z-gate with pre- and post-applied X-gates (open-controls)
+        # where the target bit-string has a '0' entry
+        if zero_inds:
+            qc.x(zero_inds)
+        qc.compose(MCMTGate(ZGate(), len(targets) - 1, 1), targets, inplace=True)
+        #qc.compose(MCMTGate(ZGate(), num_qubits - 1, 1), targets, inplace=True)
+        if zero_inds:
+            qc.x(zero_inds)
+    return qc
+
 print(input_seq_length)
 print(len(meta['states'])*input_seq_length*embedding_ancillae)
 print(len(meta['states'])*meta['n_s'])
@@ -103,7 +142,6 @@ for i in range(len(meta['states'])):
  
 #Construct the quantum circuit to simulate the FA for the input sequence
 insertQgate(circuit, gate, meta)
-print(circuit.draw(output='text'))
 
 
 #Create the Quantum Grover Oracle
@@ -114,35 +152,48 @@ for j in range(len(meta['states'])*meta['n_s']):
     ccontrols.append(total_qubits - 1 - len(meta['states'])*meta['n_s'] +j)
 print(ccontrols)
 states = meta['state_map']
-#for i in range(len(meta['states'])):
-for i in range(1):
+marked = []
+for i in range(len(meta['states'])):
+#for i in range(1):
     oracle.h(total_qubits-1)
     negs = ((" ".join(states[f'{i+1}']*3)).replace(" ",""))
+    marked.append(negs)
     for j in range(len(negs)):
         if (negs[j] == '0'):
             oracle.x(total_qubits - 1 - len(meta['states'])*meta['n_s'] +j)
-    oracle.mcx(ccontrols,total_qubits-1)
+    oracle.compose(MCMTGate(ZGate(), len(ccontrols)-1, 1),ccontrols, inplace=True)#, inplace=True)
+#    oracle.h(total_qubits-1)
+#    oracle.mcx(ccontrols,total_qubits-1)
+#    oracle.h(total_qubits-1)
     for j in range(len(negs)):
         if (negs[j] == '0'):
             oracle.x(total_qubits - 1 - len(meta['states'])*meta['n_s'] +j)
-    oracle.h(total_qubits-1)
+    #oracle.h(total_qubits-1)
 
-#print(oracle.draw(output='text'))
-ccontrols.append(total_qubits-1)
-grover_op = grover_operator(oracle, reflection_qubits=ccontrols, insert_barriers=True)
+oracle1 = grover_oracle(marked, total_qubits, ccontrols)
+#oracle1.draw(output='mpl')
+
+oracle.draw(output='mpl')
+plt.show()
+#ccontrols.append(total_qubits-1)
+grover_op = grover_operator(oracle1, reflection_qubits=ccontrols, insert_barriers=True)
+grover_op.draw(output='mpl')
+plt.show()
+
 optimal_num_iterations = math.floor(
     math.pi / (4 * math.asin(math.sqrt(len(meta['states']) / 2**len(meta['states']))))
     #math.pi / (4 * math.asin(math.sqrt(len(meta['states']) / 2**len(ccontrols))))
     #/ (4 * math.asin(math.sqrt(len(meta['states']) / 2**grover_op.num_qubits)))
 )
-optimal_num_iterations=2
+optimal_num_iterations=100
 circuit.compose(grover_op.power(optimal_num_iterations), inplace=True)
 
 circuit = transpile(circuit, optimization_level=3)#, basis_gates=["u3", "cx"])
 #print(dict(circuit.count_ops()))
-#print(grover_op.decompose().draw(output="text"))
+print(grover_op.decompose().draw(output="text"))
 #print(circuit.draw(output='text'))
 
+#print(circuit.draw(output='text'))
 
 # Measure all qubits
 #circuit.measure(9,0)
